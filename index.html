@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>灯油分配</title>
+<style>
+  body{font-family:monospace;max-width:640px;margin:2rem auto;padding:0 1rem;background:#1a1a2e;color:#e0e0e0;line-height:1.6}
+  h1{color:#f0a500;margin-bottom:.5rem}
+  .sub{color:#888;font-size:.85em;margin-bottom:1rem}
+  .bar{display:flex;gap:.75rem;flex-wrap:wrap;margin:.5rem 0}
+  .stat{padding:.4rem .7rem;border:1px solid #333;border-radius:4px;font-size:.9em}
+  .phase-tag{color:#f0a500;font-weight:bold;margin:.5rem 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin:.5rem 0}
+  .cell{padding:.6rem;border:1px solid #333;border-radius:4px}
+  .cell.dark{border-color:#c0392b} .cell.dim{border-color:#e67e22}
+  .cell.ok{border-color:#27ae60} .cell.hot{border-color:#f39c12}
+  .warn{color:#e74c3c;font-size:.85em}
+  .log{max-height:180px;overflow-y:auto;border-top:1px solid #333;padding-top:.4rem;margin-top:.6rem;font-size:.85em}
+  .log p{margin:.2rem 0}
+  .acts{margin:.6rem 0}
+  button{padding:.4rem .8rem;margin:.2rem;cursor:pointer;background:#16213e;color:#e0e0e0;border:1px solid #444;border-radius:4px}
+  button:hover{background:#0f3460}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .end{text-align:center;padding:2rem 0}
+  .end h2{color:#f0a500}
+</style>
+</head>
+<body>
+<h1>灯油分配</h1>
+<p class="sub">用有限灯油照亮工区 — 光照不足会事故，过亮会引来巡查</p>
+<div id="app"></div>
+<script>
+// === 灯油分配 — Direction Lock core loop skeleton ===
+// 查看工区 -> 放置灯 -> 调亮度 -> 工人移动工作 -> 事故/巡查结算 -> 下一夜
+
+const AREAS = [
+  { id:'tunnel',  name:'坑道',   baseRisk:40 },
+  { id:'yard',    name:'加工场', baseRisk:25 },
+  { id:'storage', name:'堆料区', baseRisk:30 },
+  { id:'entrance',name:'出入口', baseRisk:15 },
+];
+
+const OUTCOMES = {
+  survived:            { t:'熬过来了', d:'天亮了。灯油刚好用完，但每个工人都平安。' },
+  accident_catastrophe:{ t:'事故',     d:'黑暗中传来惨叫。工人被抬出去时，你看不清他们的脸。' },
+  patrol_busted:       { t:'被查',     d:'巡查封了你的工区。灯被一盏盏熄灭，灯油被没收。' },
+  oil_run_out:         { t:'灯油耗尽', d:'最后一滴灯油烧干了。黑暗重新吞没了工区。' },
+};
+
+// --- state ---
+let S = freshState();
+
+function freshState() {
+  const ab = {}; AREAS.forEach(a => ab[a.id] = 0);
+  return {
+    phase:'view', resource:80, pressure:10, risk:10, relation:50,
+    round:1, maxRounds:4, lamps:[], ab, log:[], over:false, outcome:null,
+  };
+}
+
+function clamp(v,lo,hi){ return Math.max(lo,Math.min(hi,v)); }
+
+function recalc(){
+  const b={}; AREAS.forEach(a=>b[a.id]=0);
+  S.lamps.forEach(l=>{ b[l.areaId]=clamp((b[l.areaId]||0)+l.b,0,100); });
+  S.ab=b;
+}
+
+function bLevel(v){
+  if(v<15) return {l:'黑暗',c:'dark'};
+  if(v<40) return {l:'昏暗',c:'dim'};
+  if(v<75) return {l:'充足',c:'ok'};
+  return {l:'过亮',c:'hot'};
+}
+
+function counts(){
+  let d=0,b=0; Object.values(S.ab).forEach(v=>{if(v<15)d++;if(v>=75)b++;});
+  return {dark:d,bright:b};
+}
+
+// --- player actions ---
+function doPlace(id){
+  if(S.phase!=='place')return;
+  const b=40, cost=b*0.3;
+  if(S.resource<cost){S.log.push('灯油不足！');render();return;}
+  S.lamps.push({areaId:id,b});
+  S.resource=clamp(S.resource-cost,0,100);
+  recalc();
+  S.log.push('在 '+AREAS.find(a=>a.id===id).name+' 放置灯 (亮度 '+b+')');
+  render();
+}
+
+function doAdj(i,d){
+  if(S.phase!=='adjust'||i>=S.lamps.length)return;
+  const old=S.lamps[i], nb=clamp(old.b+d,10,90), diff=nb*0.3-old.b*0.3;
+  if(diff>0&&S.resource<diff){S.log.push('灯油不足！');render();return;}
+  S.lamps[i]={...old,b:nb};
+  S.resource=clamp(S.resource-diff,0,100);
+  recalc();
+  S.log.push(AREAS.find(a=>a.id===old.areaId).name+' 灯亮度 → '+nb);
+  render();
+}
+
+// --- automated phases ---
+function workPhase(){
+  const c=counts();
+  const oil=S.lamps.length*2;
+  S.resource=clamp(S.resource-oil,0,100);
+  S.log.push('工人作业。'+S.lamps.length+'盏灯，消耗'+oil+'灯油。');
+  if(c.dark>0){
+    S.risk=clamp(S.risk+c.dark*10,0,100);
+    S.relation=clamp(S.relation-c.dark*5,0,100);
+    S.log.push(c.dark+'个区域光照不足，作业困难。');
+  }
+}
+
+function settlePhase(){
+  const c=counts();
+  // simplified event triggers mirroring src/content/events.ts
+  if(c.dark>=1&&S.risk>=30){
+    S.risk=clamp(S.risk+15,0,100); S.relation=clamp(S.relation-10,0,100);
+    S.log.push('黑暗角落传来闷响，有工人踩空跌落。');
+  }
+  if(c.dark>=2){
+    S.risk=clamp(S.risk+10,0,100); S.resource=clamp(S.resource-5,0,100);
+    S.log.push('光照不足，一批加工件在暗处被磕碰损坏。');
+  }
+  if(c.bright>=1&&S.pressure>=20){
+    S.pressure=clamp(S.pressure+10,0,100);
+    S.log.push('巡查手电光扫过工区边缘，过亮灯光引起注意。');
+  }
+  if(c.bright>=2&&S.pressure>=40){
+    S.pressure=clamp(S.pressure+15,0,100); S.resource=clamp(S.resource-8,0,100);
+    S.log.push('"这片亮得不像话。"巡查记下了你的工号。');
+  }
+  if(S.resource<=25){
+    S.resource=clamp(S.resource+20,0,100); S.relation=clamp(S.relation+5,0,100);
+    S.log.push('老陈搬开一块板子，下面藏着一小桶灯油。"省着用。"');
+  }
+  if(c.dark===0&&S.relation>=30){
+    S.relation=clamp(S.relation+10,0,100);
+    S.log.push('有人低声说了句"灯够亮，安心"。');
+  }
+  S.pressure=clamp(S.pressure-5,0,100);
+}
+
+function checkEnd(){
+  if(S.risk>=100) return 'accident_catastrophe';
+  if(S.pressure>=100) return 'patrol_busted';
+  if(S.resource<=0) return 'oil_run_out';
+  if(S.round>S.maxRounds) return 'survived';
+  return null;
+}
+
+// --- phase transition ---
+const PHASES=['view','place','adjust'];
+const PHASE_ZH={view:'查看工区',place:'放置灯',adjust:'调亮度',work:'工人作业',settle:'结算'};
+
+function next(){
+  if(S.over) return;
+  if(S.phase==='view'){
+    S.phase='place'; S.log.push('选择工区放置灯。');
+  } else if(S.phase==='place'){
+    S.phase='adjust'; S.log.push('调整亮度。点击 +/- 修改。');
+  } else if(S.phase==='adjust'){
+    S.phase='work'; workPhase();
+    S.phase='settle'; settlePhase();
+    const o=checkEnd();
+    if(o){S.over=true;S.outcome=o;}
+  } else if(S.phase==='settle'){
+    S.round++;
+    S.lamps=[];
+    const ab={};AREAS.forEach(a=>ab[a.id]=0);S.ab=ab;
+    S.phase='view';
+    const o=checkEnd();
+    if(o){S.over=true;S.outcome=o;}
+    else { S.log.push('—— 第 '+S.round+' 夜 ——'); }
+  }
+  render();
+}
+
+// --- render ---
+function render(){
+  const el=document.getElementById('app');
+  if(S.over){
+    const o=OUTCOMES[S.outcome];
+    el.innerHTML='<div class="end"><h2>'+o.t+'</h2><p>'+o.d+'</p><p>第 '+S.round+' 夜</p><button onclick="restart()">再来一次</button></div>';
+    return;
+  }
+  let h='<div class="phase-tag">第 '+S.round+' 夜 — '+PHASE_ZH[S.phase]+'</div>';
+  // warnings
+  const ow= S.resource<=20?'<span class="warn">灯油'+(S.resource<=0?'耗尽！':'告急！')+'</span>':'';
+  const pw= S.pressure>=60?'<span class="warn">巡查高度警觉！</span>':'';
+  const rw= S.risk>=60?'<span class="warn">事故风险极高！</span>':'';
+  h+='<div class="bar">'
+    +'<div class="stat">灯油 '+Math.round(S.resource)+'</div>'
+    +'<div class="stat">巡查 '+Math.round(S.pressure)+'</div>'
+    +'<div class="stat">风险 '+Math.round(S.risk)+'</div>'
+    +'<div class="stat">信任 '+Math.round(S.relation)+'</div>'
+    +'</div>'+ow+pw+rw;
+  // areas
+  h+='<div class="grid">';
+  for(const a of AREAS){
+    const v=S.ab[a.id]||0, bl=bLevel(v);
+    h+='<div class="cell '+bl.c+'"><strong>'+a.name+'</strong><br>'+Math.round(v)+' ('+bl.l+')';
+    if(S.phase==='place') h+='<br><button onclick="doPlace(\''+a.id+'\')">放置灯</button>';
+    h+='</div>';
+  }
+  h+='</div>';
+  // adjust controls
+  if(S.phase==='adjust'&&S.lamps.length){
+    h+='<div class="acts"><strong>调整灯亮度：</strong><br>';
+    S.lamps.forEach((l,i)=>{
+      const n=AREAS.find(a=>a.id===l.areaId).name;
+      h+=n+': '+Math.round(l.b)+' <button onclick="doAdj('+i+',-10)">-</button><button onclick="doAdj('+i+',10)">+</button><br>';
+    });
+    h+='</div>';
+  }
+  // next button
+  const labels={view:'开始放置灯',place:'进入调整',adjust:'确认 → 工人作业',settle:'下一夜'};
+  h+='<div class="acts"><button onclick="next()">'+(labels[S.phase]||'继续')+'</button></div>';
+  // log
+  h+='<div class="log">';
+  S.log.slice(-12).forEach(m=>{h+='<p>'+m+'</p>';});
+  h+='</div>';
+  el.innerHTML=h;
+}
+
+function restart(){ S=freshState(); render(); }
+render();
+</script>
+</body>
+</html>
