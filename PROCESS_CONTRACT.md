@@ -47,5 +47,5 @@ Whenever s changes the production workflow, run:
 For all existing repos, s may run:
 
 ~~~sh
-/home/openclaw/babel-runtime/.codex-runtime/bin/babel-ops microgame sync-contract --all --commit --push
+/home/openclaw/babel-runtime/.codex-runtime/bin/babel-ops microgame sync-contract --all --commit --push --skip-dirty
 ~~~
