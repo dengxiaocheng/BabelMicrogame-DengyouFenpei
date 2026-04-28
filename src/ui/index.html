@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>灯油分配</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans SC',monospace;max-width:640px;margin:0 auto;padding:1rem;background:#0d0d1a;color:#d0d0d0;line-height:1.5;min-height:100vh}
+h1{color:#f0a500;font-size:1.3rem;margin-bottom:.2rem}
+.sub{color:#777;font-size:.8rem;margin-bottom:.8rem}
+
+/* Phase Pipeline */
+.pipeline{display:flex;gap:2px;margin:.6rem 0;align-items:center}
+.pipe-step{padding:.3rem .5rem;font-size:.75rem;background:#1a1a2e;border:1px solid #333;border-radius:3px;color:#666;white-space:nowrap}
+.pipe-step.active{background:#2a1a00;border-color:#f0a500;color:#f0a500;font-weight:bold}
+.pipe-step.done{background:#0a1a0a;border-color:#27ae60;color:#27ae60}
+.pipe-arrow{color:#333;font-size:.7rem}
+
+/* Warning Banner */
+.warn-banner{padding:.4rem .7rem;border-radius:4px;font-size:.85rem;font-weight:bold;margin:.4rem 0;text-align:center}
+.warn-banner.critical{background:#2a0a0a;border:1px solid #c0392b;color:#e74c3c;animation:pulse 1.5s infinite}
+.warn-banner.danger{background:#2a1a00;border:1px solid #e67e22;color:#f39c12}
+.warn-banner.info{background:#0a1a2a;border:1px solid #2980b9;color:#3498db}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+
+/* Pressure Bars */
+.bars{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin:.5rem 0}
+.bar-row{display:flex;align-items:center;gap:.4rem;padding:.25rem .4rem;background:#111;border-radius:3px}
+.bar-label{font-size:.75rem;width:2.8rem;flex-shrink:0}
+.bar-track{flex:1;height:14px;background:#1a1a2e;border-radius:7px;overflow:hidden;position:relative}
+.bar-fill{height:100%;border-radius:7px;transition:width .4s ease,background .4s ease}
+.bar-fill.oil{background:linear-gradient(90deg,#e74c3c,#f39c12,#27ae60)}
+.bar-fill.patrol{background:linear-gradient(90deg,#27ae60,#f39c12,#e74c3c)}
+.bar-fill.risk{background:linear-gradient(90deg,#27ae60,#f39c12,#e74c3c)}
+.bar-fill.trust{background:linear-gradient(90deg,#e74c3c,#f39c12,#27ae60)}
+.bar-val{font-size:.75rem;width:2rem;text-align:right;flex-shrink:0}
+
+/* Area Grid */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin:.5rem 0}
+.cell{padding:.5rem;border:1px solid #333;border-radius:4px;background:#111;position:relative;transition:border-color .3s}
+.cell.dark{border-color:#c0392b;background:#1a0808}
+.cell.dim{border-color:#e67e22;background:#1a1408}
+.cell.ok{border-color:#27ae60;background:#081a0a}
+.cell.hot{border-color:#f39c12;background:#1a1a08}
+.cell-name{font-weight:bold;font-size:.9rem;margin-bottom:.1rem}
+.cell-bright{font-size:.8rem;margin-bottom:.2rem}
+.cell-desc{font-size:.72rem;color:#888;line-height:1.4;margin-bottom:.3rem;min-height:2rem}
+.cell-cost{font-size:.7rem;color:#f0a500;margin-bottom:.2rem}
+
+/* Actions */
+.acts{margin:.5rem 0}
+.adjust-list{margin:.3rem 0}
+.adjust-row{display:flex;align-items:center;gap:.3rem;padding:.2rem 0;font-size:.85rem}
+.adjust-name{width:3.5rem}
+.adjust-val{width:3rem;text-align:center}
+
+button{padding:.35rem .7rem;margin:.15rem;cursor:pointer;background:#1a1a2e;color:#d0d0d0;border:1px solid #444;border-radius:3px;font-size:.8rem;transition:background .2s}
+button:hover{background:#0f3460}
+button:disabled{opacity:.35;cursor:not-allowed}
+button.primary{background:#2a1a00;border-color:#f0a500;color:#f0a500;font-weight:bold;padding:.5rem 1rem}
+button.primary:hover{background:#3a2500}
+
+/* Log */
+.log{max-height:160px;overflow-y:auto;border-top:1px solid #222;padding-top:.4rem;margin-top:.5rem;font-size:.78rem}
+.log p{margin:.15rem 0;padding:.1rem 0;border-bottom:1px solid #111}
+.log .ev-accident{color:#e74c3c}
+.log .ev-patrol{color:#f39c12}
+.log .ev-resource{color:#3498db}
+.log .ev-relation{color:#27ae60}
+.log .ev-system{color:#888}
+
+/* Round Transition */
+.transition{padding:1rem;text-align:center;margin:.5rem 0;background:#0a0a1a;border:1px solid #f0a500;border-radius:4px}
+.transition .intro{color:#d0d0d0;font-size:.95rem;margin-bottom:.3rem}
+.transition .tension{color:#f0a500;font-size:.85rem;font-style:italic}
+
+/* End Screen */
+.end{text-align:center;padding:2rem 0}
+.end h2{color:#f0a500;font-size:1.4rem;margin-bottom:.5rem}
+.end p{margin:.3rem 0;color:#aaa}
+</style>
+</head>
+<body>
+<h1>灯油分配</h1>
+<p class="sub">用有限灯油照亮工区 — 光照不足会事故，过亮会引来巡查</p>
+<div id="app"></div>
+<script>
+// === 灯油分配 — Direction Lock UI ===
+// Core Loop: 查看工区 -> 放置灯 -> 调亮度 -> 工人移动工作 -> 事故/巡查结算 -> 下一夜
+
+// --- Content (from src/content/) ---
+const AREAS=[
+  {id:'tunnel',name:'坑道',baseRisk:40,desc:{
+    dark:'坑道完全沉入黑暗，只能听到水滴声和远处不明的响动。',
+    dim:'微弱的光勉强照亮脚下的路面，两壁的阴影仍然深重。',
+    ok:'灯光明亮稳定，坑道的每个角落都被照到，工人可以安全行走。',
+    hot:'坑道被照得通亮，光芒从入口向外溢出，远处也能看见。'}},
+  {id:'yard',name:'加工场',baseRisk:25,desc:{
+    dark:'加工场漆黑一片，材料和工具混在暗处，分不清哪是哪。',
+    dim:'昏暗的灯光下，只能看到最近几件材料的轮廓。',
+    ok:'光线足够辨认材料和处理工具，工人可以正常作业。',
+    hot:'整个加工场灯火通明，连远处的围栏都被照亮了。'}},
+  {id:'storage',name:'堆料区',baseRisk:30,desc:{
+    dark:'堆料区完全没入黑暗，堆积物之间形成看不见的缝隙和死角。',
+    dim:'勉强能看到主要通道，但堆积物背后仍有大片阴影。',
+    ok:'灯光覆盖了主要通道和堆放区，工人可以辨认路径。',
+    hot:'堆料区被全面照亮，连最深处的角落也没有阴影。'}},
+  {id:'entrance',name:'出入口',baseRisk:15,desc:{
+    dark:'出入口一片漆黑，几乎找不到方向。好处是巡查也看不到这里。',
+    dim:'微光勾勒出出入口的轮廓，刚好够辨认方向。',
+    ok:'出入口被清晰地照亮，进出的工人不必摸索。',
+    hot:'明亮的灯光从出入口向外扩散，远处一眼就能看到这片光亮。'}}
+];
+
+const ROUNDS=[
+  {intro:'夜色降临，工区的灯光是唯一的安全线。',tension:'灯油充足，但经验告诉你，它消耗得比你想象的快。'},
+  {intro:'第二个夜晚。你开始了解这些工人的习惯。',tension:'灯油少了些许，巡查今晚可能会路过。'},
+  {intro:'第三个夜晚。你已经清楚每盏灯的位置和它的代价。',tension:'灯油告急。巡查的频率在增加。每一步都不能错。'},
+  {intro:'最后一夜。天快亮了，但这也是最难的一夜。',tension:'灯油所剩无几，巡查随时可能突击检查。撑过去就是胜利。'}
+];
+
+const OUTCOMES={
+  survived:{t:'熬过来了',d:'天亮了。灯油刚好用完，但每个工人都平安。你把空油桶放回角落，靠在墙上闭上了眼。'},
+  accident_catastrophe:{t:'事故',d:'黑暗中传来惨叫。工人被抬出去的时候，你甚至看不清他们的脸。灯油还剩小半桶，但已经没有意义了。'},
+  patrol_busted:{t:'被查',d:'巡查封了你的工区。灯被一盏盏熄灭，灯油被没收。工人们在黑暗中沉默地站着。'},
+  oil_run_out:{t:'灯油耗尽',d:'最后一滴灯油烧干了。黑暗重新吞没了工区。你能做的都做了，接下来只能听天由命。'}
+};
+
+const PHASES=['view','place','adjust','work','settle'];
+const PHASE_ZH={view:'查看工区',place:'放置灯',adjust:'调亮度',work:'工人作业',settle:'结算'};
+
+// --- State ---
+let S=freshState();
+function freshState(){
+  const ab={};AREAS.forEach(a=>ab[a.id]=0);
+  return{phase:'view',resource:80,pressure:10,risk:10,relation:50,round:1,maxRounds:4,lamps:[],ab,log:[],over:false,outcome:null,showTransition:true};
+}
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v))}
+function recalc(){const b={};AREAS.forEach(a=>b[a.id]=0);S.lamps.forEach(l=>{b[l.areaId]=clamp((b[l.areaId]||0)+l.b,0,100)});S.ab=b}
+function bLevel(v){if(v<15)return{l:'黑暗',c:'dark',k:'dark'};if(v<40)return{l:'昏暗',c:'dim',k:'dim'};if(v<75)return{l:'充足',c:'ok',k:'ok'};return{l:'过亮',c:'hot',k:'hot'}}
+function counts(){let d=0,b=0;Object.values(S.ab).forEach(v=>{if(v<15)d++;if(v>=75)b++});return{dark:d,bright:b}}
+
+// --- Player Actions ---
+function doPlace(id){
+  if(S.phase!=='place')return;
+  const b=40,cost=Math.round(b*0.3);
+  if(S.resource<cost){S.log.push({t:'灯油不足，无法放置！',c:'ev-system'});render();return}
+  S.lamps.push({areaId:id,b});
+  S.resource=clamp(S.resource-cost,0,100);recalc();
+  S.log.push({t:'在 '+AREAS.find(a=>a.id===id).name+' 放置灯 (亮度 '+b+'，消耗 '+cost+' 灯油)',c:'ev-system'});
+  render();
+}
+function doAdj(i,d){
+  if(S.phase!=='adjust'||i>=S.lamps.length)return;
+  const old=S.lamps[i],nb=clamp(old.b+d,10,90),diff=Math.round(nb*0.3-old.b*0.3);
+  if(diff>0&&S.resource<diff){S.log.push({t:'灯油不足！',c:'ev-system'});render();return}
+  S.lamps[i]={...old,b:nb};S.resource=clamp(S.resource-diff,0,100);recalc();
+  const name=AREAS.find(a=>a.id===old.areaId).name;
+  S.log.push({t:name+' 灯亮度 '+Math.round(old.b)+' → '+nb+(diff>0?' (+'+diff+' 灯油)':' (-'+Math.abs(diff)+' 灯油)'),c:'ev-system'});
+  render();
+}
+
+// --- Automated Phases ---
+function workPhase(){
+  const c=counts(),oil=S.lamps.length*2;
+  S.resource=clamp(S.resource-oil,0,100);
+  S.log.push({t:'工人作业。'+S.lamps.length+' 盏灯运行，消耗 '+oil+' 灯油。',c:'ev-system'});
+  if(c.dark>0){S.risk=clamp(S.risk+c.dark*10,0,100);S.relation=clamp(S.relation-c.dark*5,0,100);S.log.push({t:c.dark+' 个区域光照不足，工人作业困难。',c:'ev-accident'})}
+  if(c.bright>0){S.pressure=clamp(S.pressure+c.bright*8,0,100);S.log.push({t:c.bright+' 个区域过亮，巡查可能注意到。',c:'ev-patrol'})}
+  if(S.relation<30){S.risk=clamp(S.risk+5,0,100);S.log.push({t:'工人信任低，作业不够仔细。',c:'ev-accident'})}
+}
+function settlePhase(){
+  const c=counts();
+  if(c.dark>=1&&S.risk>=30){S.risk=clamp(S.risk+15,0,100);S.relation=clamp(S.relation-10,0,100);S.log.push({t:'黑暗角落传来闷响，有工人踩空跌落。',c:'ev-accident'})}
+  if(c.dark>=2){S.risk=clamp(S.risk+10,0,100);S.resource=clamp(S.resource-5,0,100);S.log.push({t:'光照不足，一批加工件在暗处被磕碰损坏。',c:'ev-accident'})}
+  if(c.bright>=1&&S.pressure>=20){S.pressure=clamp(S.pressure+10,0,100);S.log.push({t:'过亮灯光引起巡查注意。',c:'ev-patrol'})}
+  if(c.bright>=2&&S.pressure>=40){S.pressure=clamp(S.pressure+15,0,100);S.resource=clamp(S.resource-8,0,100);S.log.push({t:'"这片亮得不像话。"巡查记下了你的工号。',c:'ev-patrol'})}
+  if(S.resource<=25){S.resource=clamp(S.resource+20,0,100);S.relation=clamp(S.relation+5,0,100);S.log.push({t:'老陈搬开板子，下面藏着一小桶灯油。"省着用。"',c:'ev-resource'})}
+  if(c.dark===0&&S.relation>=30){S.relation=clamp(S.relation+10,0,100);S.log.push({t:'有人低声说"灯够亮，安心"。',c:'ev-relation'})}
+  S.pressure=clamp(S.pressure-5,0,100);S.pressure=clamp(S.pressure+S.round*3,0,100);
+  if(S.relation<25){S.pressure=clamp(S.pressure+8,0,100);S.log.push({t:'有工人向巡查通风报信。',c:'ev-patrol'})}
+}
+function checkEnd(){if(S.risk>=100)return'accident_catastrophe';if(S.pressure>=100)return'patrol_busted';if(S.resource<=0)return'oil_run_out';if(S.round>S.maxRounds)return'survived';return null}
+
+// --- Phase Transition ---
+function next(){
+  if(S.over)return;
+  if(S.phase==='view'){S.phase='place';S.log.push({t:'选择工区放置灯。',c:'ev-system'})}
+  else if(S.phase==='place'){S.phase='adjust';S.log.push({t:'调整亮度。点击 +/- 修改。',c:'ev-system'})}
+  else if(S.phase==='adjust'){
+    S.phase='work';workPhase();S.phase='settle';settlePhase();
+    const o=checkEnd();if(o){S.over=true;S.outcome=o}
+  }else if(S.phase==='settle'){
+    S.round++;S.lamps=[];const ab={};AREAS.forEach(a=>ab[a.id]=0);S.ab=ab;
+    S.phase='view';S.showTransition=true;
+    const o=checkEnd();if(o){S.over=true;S.outcome=o}
+    else{S.log.push({t:'—— 第 '+S.round+' 夜 ——',c:'ev-system'})}
+  }
+  render();
+}
+
+// --- Render ---
+function render(){
+  const el=document.getElementById('app');
+  if(S.over){const o=OUTCOMES[S.outcome];el.innerHTML='<div class="end"><h2>'+o.t+'</h2><p>'+o.d+'</p><p style="margin-top:1rem;color:#888">第 '+S.round+' 夜</p><button class="primary" onclick="restart()" style="margin-top:1rem">再来一次</button></div>';return}
+
+  let h='';
+
+  // Round transition overlay
+  if(S.showTransition&&S.phase==='view'){
+    const r=ROUNDS[S.round-1];
+    if(r)h+='<div class="transition"><div class="intro">'+r.intro+'</div><div class="tension">'+r.tension+'</div></div>';
+    S.showTransition=false;
+  }
+
+  // Phase Pipeline
+  h+='<div class="pipeline">';
+  PHASES.forEach(p=>{
+    const idx=PHASES.indexOf(p),curIdx=PHASES.indexOf(S.phase);
+    const cls=p===S.phase?'active':idx<curIdx?'done':'';
+    h+='<div class="pipe-step '+cls+'">'+PHASE_ZH[p]+'</div>';
+    if(p!=='settle')h+='<span class="pipe-arrow">▸</span>';
+  });
+  h+='</div>';
+
+  // Warning Banner
+  const warns=[];
+  if(S.resource<=0)warns.push({t:'灯油耗尽！',c:'critical'});
+  else if(S.resource<=15)warns.push({t:'灯油告急！仅剩 '+Math.round(S.resource),c:'critical'});
+  else if(S.resource<=30)warns.push({t:'灯油紧张：'+Math.round(S.resource),c:'danger'});
+  if(S.risk>=80)warns.push({t:'事故风险极高！',c:'critical'});
+  else if(S.risk>=50)warns.push({t:'事故风险上升',c:'danger'});
+  if(S.pressure>=80)warns.push({t:'巡查即将突击！',c:'critical'});
+  else if(S.pressure>=50)warns.push({t:'巡查高度警觉',c:'danger'});
+  warns.forEach(w=>{h+='<div class="warn-banner '+w.c+'">'+w.t+'</div>'});
+
+  // Pressure Bars
+  h+='<div class="bars">';
+  h+=barHTML('灯油',S.resource,'oil',true);
+  h+=barHTML('巡查',S.pressure,'patrol',false);
+  h+=barHTML('风险',S.risk,'risk',false);
+  h+=barHTML('信任',S.relation,'trust',true);
+  h+='</div>';
+
+  // Area Grid
+  h+='<div class="grid">';
+  for(const a of AREAS){
+    const v=S.ab[a.id]||0,bl=bLevel(v);
+    h+='<div class="cell '+bl.c+'">';
+    h+='<div class="cell-name">'+a.name+'</div>';
+    h+='<div class="cell-bright">'+Math.round(v)+' ('+bl.l+')</div>';
+    h+='<div class="cell-desc">'+a.desc[bl.k]+'</div>';
+    if(S.phase==='place'){
+      const cost=Math.round(40*0.3);
+      const canPlace=S.resource>=cost;
+      h+='<div class="cell-cost">消耗 '+cost+' 灯油</div>';
+      h+='<button onclick="doPlace(\''+a.id+'\')" '+(canPlace?'':'disabled')+'>'+PHASE_ZH.place+'</button>';
+    }
+    h+='</div>';
+  }
+  h+='</div>';
+
+  // Adjust controls
+  if(S.phase==='adjust'&&S.lamps.length){
+    h+='<div class="acts"><strong>调整灯亮度：</strong>';
+    h+='<div class="adjust-list">';
+    S.lamps.forEach((l,i)=>{
+      const n=AREAS.find(a=>a.id===l.areaId).name;
+      const upCost=Math.round(clamp(l.b+10,10,90)*0.3-l.b*0.3);
+      h+='<div class="adjust-row">';
+      h+='<span class="adjust-name">'+n+'</span>';
+      h+='<button onclick="doAdj('+i+',-10)">-</button>';
+      h+='<span class="adjust-val">'+Math.round(l.b)+'</span>';
+      h+='<button onclick="doAdj('+i+',10)" '+(S.resource>=upCost?'':'disabled')+'>+</button>';
+      if(upCost>0)h+='<span style="font-size:.7rem;color:#f0a500">+'+upCost+'油</span>';
+      h+='</div>';
+    });
+    h+='</div></div>';
+  }
+
+  // Primary Action Button
+  const labels={view:'开始放置灯',place:'进入调整',adjust:'确认 → 工人作业',settle:'下一夜'};
+  h+='<div class="acts"><button class="primary" onclick="next()">'+(labels[S.phase]||'继续')+'</button></div>';
+
+  // Event Log
+  h+='<div class="log">';
+  S.log.slice(-10).forEach(m=>{h+='<p class="'+m.c+'">'+m.t+'</p>'});
+  h+='</div>';
+
+  el.innerHTML=h;
+}
+
+function barHTML(label,val,cls,invert){
+  const pct=Math.max(0,Math.min(100,Math.round(val)));
+  const color=invert?pct:pct;
+  return '<div class="bar-row"><span class="bar-label">'+label+'</span><div class="bar-track"><div class="bar-fill '+cls+'" style="width:'+pct+'%"></div></div><span class="bar-val">'+pct+'</span></div>';
+}
+
+function restart(){S=freshState();render()}
+render();
+</script>
+</body>
+</html>
