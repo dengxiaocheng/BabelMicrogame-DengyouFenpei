@@ -166,23 +166,53 @@ export function adjustLamp(state: GameState, index: number, newBrightness: numbe
 export function runWorkPhase(state: GameState): GameState {
   const c = countAreaStates(state.areaBrightness);
   const log = [...state.log];
-  let { resource, risk, relation } = state;
+  let { resource, risk, relation, pressure } = state;
 
+  // Oil consumption: each running lamp costs oil
   const oilUse = state.lamps.length * 2;
   resource = clamp(resource - oilUse, 0, 100);
   log.push(`工人作业。${state.lamps.length} 盏灯运行，消耗 ${oilUse} 灯油。`);
 
+  // Dark areas → accident risk + worker trust loss (survival + relation pressure)
   if (c.darkAreas > 0) {
     risk = clamp(risk + c.darkAreas * 10, 0, 100);
     relation = clamp(relation - c.darkAreas * 5, 0, 100);
     log.push(`${c.darkAreas} 个区域光照不足，工人作业困难。`);
   }
+
+  // Dim areas → mild risk + mild trust loss
+  if (c.dimAreas > 0) {
+    risk = clamp(risk + c.dimAreas * 4, 0, 100);
+    relation = clamp(relation - c.dimAreas * 2, 0, 100);
+    log.push(`${c.dimAreas} 个区域光线昏暗，作业效率下降。`);
+  }
+
+  // Adequate areas → risk reduction + trust gain
   if (c.adequateAreas > 0) {
     risk = clamp(risk - c.adequateAreas * 3, 0, 100);
     relation = clamp(relation + c.adequateAreas * 2, 0, 100);
   }
 
-  return { ...state, resource, risk, relation, log, phase: 'work' };
+  // Bright areas → patrol attention (resource/risk pressure AND relation pressure)
+  if (c.brightAreas > 0) {
+    pressure = clamp(pressure + c.brightAreas * 8, 0, 100);
+    log.push(`${c.brightAreas} 个区域过亮，巡查可能注意到。`);
+  }
+
+  // Bright entrance: specifically visible to patrols from outside
+  const entranceBrightness = state.areaBrightness['entrance'] || 0;
+  if (entranceBrightness >= 75) {
+    pressure = clamp(pressure + 10, 0, 100);
+    log.push('出入口灯光过亮，远处可见，巡查极易发现。');
+  }
+
+  // Cross-pressure: low relation → careless workers → more risk
+  if (relation < 30) {
+    risk = clamp(risk + 5, 0, 100);
+    log.push('工人信任低，作业不够仔细，事故隐患增加。');
+  }
+
+  return { ...state, resource, risk, relation, pressure, log, phase: 'work' };
 }
 
 export function runSettlePhase(state: GameState): GameState {
@@ -194,13 +224,26 @@ export function runSettlePhase(state: GameState): GameState {
     risk: state.risk, relation: state.relation, round: state.round,
   };
 
+  // Apply triggered events
   for (const ev of events) {
     log.push(ev.text);
     for (const fx of ev.effects) {
       vals[fx.key] = clamp(vals[fx.key] + fx.delta, 0, 100);
     }
   }
-  vals.pressure = clamp(vals.pressure - 5, 0, 100);
+
+  // Night-based pressure scaling: later nights are harder
+  vals.pressure = clamp(vals.pressure + state.round * 3, 0, 100);
+
+  // Relation-pressure cross-effect: low trust → workers leak info to patrol
+  if (vals.relation < 25) {
+    vals.pressure = clamp(vals.pressure + 8, 0, 100);
+    log.push('有工人向巡查通风报信，巡查注意力增加。');
+  }
+
+  // Natural pressure decay (less in later rounds)
+  const pressureDecay = Math.max(5 - state.round, 2);
+  vals.pressure = clamp(vals.pressure - pressureDecay, 0, 100);
 
   return {
     ...state, phase: 'settle',
