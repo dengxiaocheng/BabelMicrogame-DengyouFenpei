@@ -13,11 +13,11 @@
 
 ## State
 
-- resource
-- pressure
-- risk
-- relation
-- round
+- oil
+- light_coverage
+- accident_risk
+- patrol_attention
+- night
 
 ## UI
 
