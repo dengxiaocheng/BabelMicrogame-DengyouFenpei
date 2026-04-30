@@ -5,6 +5,7 @@ import {
   runWorkPhase, runSettlePhase, checkOutcome,
   advanceRound, playRound, countAreaStates,
   AREAS,
+  getAreaDescription, getOutcomeDisplay, getRoundIntro,
 } from './main.ts';
 
 describe('Foundation: createInitialState', () => {
@@ -286,5 +287,50 @@ describe('Direction Lock: full cycle settlement', () => {
     s = playRound(s);
     // With very low resource, oil_run_out or other outcomes possible
     assert.ok(s.log.length > 0, 'settlement produced log entries');
+  });
+});
+
+// ============================================================
+// Integration: content files connected to engine
+// ============================================================
+
+describe('Integration: content connected to engine', () => {
+  it('AREAS loaded from content/areas.ts has 4 areas', () => {
+    assert.equal(AREAS.length, 4);
+    const ids = AREAS.map(a => a.id).sort();
+    assert.deepEqual(ids, ['entrance', 'storage', 'tunnel', 'yard']);
+  });
+
+  it('getAreaDescription returns text from content data', () => {
+    const dark = getAreaDescription('tunnel', 0);
+    assert.ok(dark.includes('黑暗') || dark.includes('水滴'));
+    const bright = getAreaDescription('tunnel', 80);
+    assert.ok(bright.includes('通亮') || bright.includes('亮'));
+    assert.equal(getAreaDescription('nonexistent', 50), '');
+  });
+
+  it('getOutcomeDisplay returns correct outcome text', () => {
+    const survived = getOutcomeDisplay('survived');
+    assert.ok(survived);
+    assert.equal(survived!.title, '熬过来了');
+    assert.equal(getOutcomeDisplay(null), null);
+    assert.equal(getOutcomeDisplay('nonexistent'), null);
+  });
+
+  it('getRoundIntro returns round transition text', () => {
+    const r1 = getRoundIntro(1);
+    assert.ok(r1);
+    assert.ok(r1!.intro.includes('夜色'));
+    assert.equal(getRoundIntro(5), null);
+  });
+
+  it('full round produces content-driven events and state changes', () => {
+    let s = createInitialState();
+    s = { ...s, phase: 'place' };
+    s = placeLamp(s, 'tunnel', 50);
+    s = placeLamp(s, 'yard', 40);
+    s = playRound(s);
+    assert.ok(s.resource < 80, 'oil consumed');
+    assert.ok(s.log.length > 0, 'log has entries including content events');
   });
 });

@@ -2,78 +2,35 @@
 // Serves Direction Lock core loop:
 // 查看工区 -> 放置灯 -> 调亮度 -> 工人移动工作 -> 事故/巡查结算 -> 下一夜
 
-// --- Inline content stubs (foundation; later workers will expand into src/content/) ---
+// --- Content integration (from src/content/) ---
+export { AREAS, countAreaStates, getAreaLightDescription } from './content/areas.ts';
+export type { Area } from './content/areas.ts';
+export { pickEventsByCategory } from './content/events.ts';
+export type { GameEvent, StateSnapshot } from './content/events.ts';
+export {
+  ROUND_TRANSITIONS, UI_TEXT, OUTCOMES,
+  getRoundTransition, getOilWarning, getPressureWarning,
+} from './content/text.ts';
+export type { OutcomeText, RoundTransition } from './content/text.ts';
 
-export interface Area {
-  id: string;
-  name: string;
-  baseRisk: number;
+import { AREAS, countAreaStates, getAreaLightDescription } from './content/areas.ts';
+import { pickEventsByCategory } from './content/events.ts';
+import type { StateSnapshot, StateKey } from './content/events.ts';
+import { OUTCOMES, getRoundTransition } from './content/text.ts';
+
+// --- Integration helpers ---
+
+export function getAreaDescription(areaId: string, brightness: number): string {
+  return getAreaLightDescription(areaId, brightness);
 }
 
-export const AREAS: Area[] = [
-  { id: 'tunnel',   name: '坑道',   baseRisk: 40 },
-  { id: 'yard',     name: '加工场', baseRisk: 25 },
-  { id: 'storage',  name: '堆料区', baseRisk: 30 },
-  { id: 'entrance', name: '出入口', baseRisk: 15 },
-];
-
-export interface AreaCount {
-  darkAreas: number;
-  dimAreas: number;
-  adequateAreas: number;
-  brightAreas: number;
+export function getOutcomeDisplay(outcome: string | null) {
+  if (!outcome) return null;
+  return OUTCOMES.find(o => o.id === outcome) ?? null;
 }
 
-export function countAreaStates(ab: Record<string, number>): AreaCount {
-  let darkAreas = 0, dimAreas = 0, adequateAreas = 0, brightAreas = 0;
-  for (const a of AREAS) {
-    const v = ab[a.id] || 0;
-    if (v < 15) darkAreas++;
-    else if (v < 40) dimAreas++;
-    else if (v < 75) adequateAreas++;
-    else brightAreas++;
-  }
-  return { darkAreas, dimAreas, adequateAreas, brightAreas };
-}
-
-export type StateKey = 'resource' | 'pressure' | 'risk' | 'relation' | 'round';
-
-export interface StateSnapshot {
-  resource: number;
-  pressure: number;
-  risk: number;
-  relation: number;
-  round: number;
-  darkAreas: number;
-  brightAreas: number;
-}
-
-interface GameEvent {
-  text: string;
-  effects: { key: StateKey; delta: number }[];
-}
-
-export function pickEventsByCategory(snap: StateSnapshot): GameEvent[] {
-  const events: GameEvent[] = [];
-  if (snap.darkAreas >= 1 && snap.risk >= 30) {
-    events.push({ text: '黑暗角落传来闷响，有工人踩空跌落。', effects: [{ key: 'risk', delta: 15 }, { key: 'relation', delta: -10 }] });
-  }
-  if (snap.darkAreas >= 2) {
-    events.push({ text: '光照不足，加工件在暗处被磕碰损坏。', effects: [{ key: 'risk', delta: 10 }, { key: 'resource', delta: -5 }] });
-  }
-  if (snap.brightAreas >= 1 && snap.pressure >= 20) {
-    events.push({ text: '过亮灯光引起巡查注意。', effects: [{ key: 'pressure', delta: 10 }] });
-  }
-  if (snap.brightAreas >= 2 && snap.pressure >= 40) {
-    events.push({ text: '"这片亮得不像话。" 巡查记下了你的工号。', effects: [{ key: 'pressure', delta: 15 }, { key: 'resource', delta: -8 }] });
-  }
-  if (snap.resource <= 25) {
-    events.push({ text: '老陈搬开板子，下面藏着一小桶灯油。"省着用。"', effects: [{ key: 'resource', delta: 20 }, { key: 'relation', delta: 5 }] });
-  }
-  if (snap.darkAreas === 0 && snap.relation >= 30) {
-    events.push({ text: '有人低声说"灯够亮，安心"。', effects: [{ key: 'relation', delta: 10 }] });
-  }
-  return events;
+export function getRoundIntro(round: number) {
+  return getRoundTransition(round);
 }
 
 // --- Engine Types ---

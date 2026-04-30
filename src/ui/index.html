@@ -139,7 +139,7 @@ function freshState(){
 function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v))}
 function recalc(){const b={};AREAS.forEach(a=>b[a.id]=0);S.lamps.forEach(l=>{b[l.areaId]=clamp((b[l.areaId]||0)+l.b,0,100)});S.ab=b}
 function bLevel(v){if(v<15)return{l:'黑暗',c:'dark',k:'dark'};if(v<40)return{l:'昏暗',c:'dim',k:'dim'};if(v<75)return{l:'充足',c:'ok',k:'ok'};return{l:'过亮',c:'hot',k:'hot'}}
-function counts(){let d=0,b=0;Object.values(S.ab).forEach(v=>{if(v<15)d++;if(v>=75)b++});return{dark:d,bright:b}}
+function counts(){let d=0,b=0,dim=0,ok=0;Object.values(S.ab).forEach(v=>{if(v<15)d++;else if(v<40)dim++;else if(v<75)ok++;else b++});return{dark:d,bright:b,dim,adequate:ok}}
 
 // --- Player Actions ---
 function doPlace(id){
@@ -167,7 +167,10 @@ function workPhase(){
   S.resource=clamp(S.resource-oil,0,100);
   S.log.push({t:'工人作业。'+S.lamps.length+' 盏灯运行，消耗 '+oil+' 灯油。',c:'ev-system'});
   if(c.dark>0){S.risk=clamp(S.risk+c.dark*10,0,100);S.relation=clamp(S.relation-c.dark*5,0,100);S.log.push({t:c.dark+' 个区域光照不足，工人作业困难。',c:'ev-accident'})}
+  if(c.dim>0){S.risk=clamp(S.risk+c.dim*4,0,100);S.relation=clamp(S.relation-c.dim*2,0,100);S.log.push({t:c.dim+' 个区域光线昏暗，作业效率下降。',c:'ev-accident'})}
+  if(c.adequate>0){S.risk=clamp(S.risk-c.adequate*3,0,100);S.relation=clamp(S.relation+c.adequate*2,0,100)}
   if(c.bright>0){S.pressure=clamp(S.pressure+c.bright*8,0,100);S.log.push({t:c.bright+' 个区域过亮，巡查可能注意到。',c:'ev-patrol'})}
+  const eb=S.ab.entrance||0;if(eb>=75){S.pressure=clamp(S.pressure+10,0,100);S.log.push({t:'出入口灯光过亮，远处可见，巡查极易发现。',c:'ev-patrol'})}
   if(S.relation<30){S.risk=clamp(S.risk+5,0,100);S.log.push({t:'工人信任低，作业不够仔细。',c:'ev-accident'})}
 }
 function settlePhase(){
@@ -178,7 +181,7 @@ function settlePhase(){
   if(c.bright>=2&&S.pressure>=40){S.pressure=clamp(S.pressure+15,0,100);S.resource=clamp(S.resource-8,0,100);S.log.push({t:'"这片亮得不像话。"巡查记下了你的工号。',c:'ev-patrol'})}
   if(S.resource<=25){S.resource=clamp(S.resource+20,0,100);S.relation=clamp(S.relation+5,0,100);S.log.push({t:'老陈搬开板子，下面藏着一小桶灯油。"省着用。"',c:'ev-resource'})}
   if(c.dark===0&&S.relation>=30){S.relation=clamp(S.relation+10,0,100);S.log.push({t:'有人低声说"灯够亮，安心"。',c:'ev-relation'})}
-  S.pressure=clamp(S.pressure-5,0,100);S.pressure=clamp(S.pressure+S.round*3,0,100);
+  S.pressure=clamp(S.pressure+S.round*3,0,100);S.pressure=clamp(S.pressure-Math.max(5-S.round,2),0,100);
   if(S.relation<25){S.pressure=clamp(S.pressure+8,0,100);S.log.push({t:'有工人向巡查通风报信。',c:'ev-patrol'})}
 }
 function checkEnd(){if(S.risk>=100)return'accident_catastrophe';if(S.pressure>=100)return'patrol_busted';if(S.resource<=0)return'oil_run_out';if(S.round>S.maxRounds)return'survived';return null}
