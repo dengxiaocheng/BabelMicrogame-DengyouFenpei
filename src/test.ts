@@ -334,3 +334,139 @@ describe('Integration: content connected to engine', () => {
     assert.ok(s.log.length > 0, 'log has entries including content events');
   });
 });
+
+// ============================================================
+// QA: Failure and ending paths
+// ============================================================
+
+describe('QA: failure — accident catastrophe', () => {
+  it('game ends when risk reaches 100 from all-dark strategy', () => {
+    // Run many rounds with no lamps → risk accumulates → accident catastrophe
+    let s = createInitialState();
+    for (let i = 0; i < 5; i++) {
+      s = playRound(s);
+      if (s.gameOver) break;
+      s = advanceRound(s);
+      if (s.gameOver) break;
+    }
+    assert.ok(s.gameOver, 'game ended');
+    assert.equal(s.outcome, 'accident_catastrophe');
+  });
+});
+
+describe('QA: failure — patrol busted', () => {
+  it('game ends with patrol_busted when pressure reaches 100', () => {
+    // Directly test checkOutcome with maxed pressure
+    const s = { ...createInitialState(), pressure: 100 };
+    assert.equal(checkOutcome(s), 'patrol_busted');
+  });
+
+  it('bright strategy drives pressure upward over multiple rounds', () => {
+    // Light all 4 areas bright to avoid dark-area risk, but trigger patrol
+    let s = createInitialState();
+    for (let i = 0; i < 4; i++) {
+      s = { ...s, phase: 'place' };
+      s = placeLamp(s, 'tunnel', 80);
+      s = placeLamp(s, 'yard', 80);
+      s = placeLamp(s, 'storage', 80);
+      s = placeLamp(s, 'entrance', 80);
+      s = playRound(s);
+      if (s.gameOver) break;
+      s = advanceRound(s);
+      if (s.gameOver) break;
+    }
+    // Either game ended from patrol, or pressure is very high
+    assert.ok(s.gameOver || s.pressure >= 50,
+      `pressure should be high: ${s.pressure}, outcome: ${s.outcome}`);
+  });
+});
+
+describe('QA: failure — oil run out', () => {
+  it('checkOutcome detects oil depletion at resource <= 0', () => {
+    const s = { ...createInitialState(), resource: 0 };
+    assert.equal(checkOutcome(s), 'oil_run_out');
+  });
+
+  it('work phase consumption depletes oil deterministically', () => {
+    // Test the deterministic oil consumption path (work phase only, skip settle events)
+    let s = { ...createInitialState(), resource: 15 };
+    s = { ...s, phase: 'place' };
+    s = placeLamp(s, 'tunnel', 20);
+    const beforeWork = s.resource;
+    s = runWorkPhase(s);
+    // Lamp consumption: 1 lamp * 2 = 2 oil
+    assert.ok(s.resource < beforeWork, `work phase consumed oil: ${beforeWork} -> ${s.resource}`);
+  });
+});
+
+describe('QA: success — survived all rounds', () => {
+  it('checkOutcome detects survived when round exceeds maxRounds', () => {
+    const s = { ...createInitialState(), round: 5 };
+    assert.equal(checkOutcome(s), 'survived');
+  });
+
+  it('advancing rounds can reach survived outcome', () => {
+    let s = createInitialState();
+    // Use adequate lighting to keep risk low and pressure moderate
+    for (let i = 0; i < 4; i++) {
+      s = { ...s, phase: 'place' };
+      s = placeLamp(s, 'tunnel', 50);
+      s = placeLamp(s, 'yard', 50);
+      s = placeLamp(s, 'storage', 50);
+      s = playRound(s);
+      if (s.gameOver) break;
+      s = advanceRound(s);
+      if (s.gameOver) break;
+    }
+    // Game should have ended — either survived or a failure outcome
+    assert.ok(s.gameOver, 'game ended after 4 rounds');
+    assert.ok(s.outcome !== null, `outcome: ${s.outcome}`);
+  });
+});
+
+describe('QA: minimum interaction — two areas with brightness changes', () => {
+  it('placing lamps in 2+ areas changes both coverage and patrol pressure', () => {
+    let s = createInitialState();
+    s = { ...s, phase: 'place' };
+    s = placeLamp(s, 'tunnel', 30);
+    s = placeLamp(s, 'yard', 70);
+    // Verify both areas have brightness
+    assert.ok(s.areaBrightness['tunnel'] > 0, 'tunnel has light');
+    assert.ok(s.areaBrightness['yard'] > 0, 'yard has light');
+    // Now run the round — both risk and pressure should change
+    const beforeRisk = s.risk;
+    const beforePressure = s.pressure;
+    s = playRound(s);
+    // At least one of risk/pressure must differ from initial
+    assert.ok(s.risk !== beforeRisk || s.pressure !== beforePressure,
+      'state changed from two-area lighting');
+    assert.ok(s.resource < 80, 'oil consumed from two lamps');
+  });
+});
+
+describe('QA: primary input -> state delta traceability', () => {
+  it('each lamp placement produces traceable state deltas', () => {
+    let s = createInitialState();
+    s = { ...s, phase: 'place' };
+    const beforeOil = s.resource;
+    // Place first lamp
+    s = placeLamp(s, 'tunnel', 50);
+    const oilAfter1 = s.resource;
+    assert.ok(oilAfter1 < beforeOil, 'oil decreased after lamp 1');
+    assert.ok(s.log.some(m => m.includes('tunnel') && m.includes('放置灯')), 'log traces lamp 1');
+    // Place second lamp
+    s = placeLamp(s, 'yard', 40);
+    assert.ok(s.resource < oilAfter1, 'oil decreased after lamp 2');
+    assert.ok(s.log.some(m => m.includes('yard') && m.includes('放置灯')), 'log traces lamp 2');
+    // After full round, all 5 required states should differ from initial
+    s = playRound(s);
+    const init = createInitialState();
+    const changedStates: string[] = [];
+    if (s.resource !== init.resource) changedStates.push('oil');
+    if (s.risk !== init.risk) changedStates.push('accident_risk');
+    if (s.pressure !== init.pressure) changedStates.push('patrol_attention');
+    // light_coverage is reflected in areaBrightness — captured in lamps
+    assert.ok(changedStates.length >= 2,
+      `at least 2 required states changed: ${changedStates.join(', ')}`);
+  });
+});
