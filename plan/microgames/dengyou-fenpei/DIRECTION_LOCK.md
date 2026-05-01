@@ -18,21 +18,14 @@
 - 不把小游戏扩成长期经营或开放世界
 
 ## Required State
-- oil (resource: 0-100 剩余灯油)
-- light_coverage (areaBrightness: 每区域 0-100 亮度值, lamps: 已放置灯列表)
-- accident_risk (risk: 0-100 事故风险)
-- patrol_attention (pressure: 0-100 巡查注意力)
-- night (round: 当前夜次, maxRounds: 4)
+- oil
+- light_coverage
+- accident_risk
+- patrol_attention
+- night
 
 ## Success
 在限定时长内完成主循环，并稳定进入至少一个可结算结局
 
 ## Failure
 关键状态崩溃，或在本轮主循环中被系统淘汰
-
-## Implementation Status
-- Engine (src/main.ts): 完整实现 createInitialState/placeLamp/adjustLamp/runWorkPhase/runSettlePhase/advanceRound/checkOutcome
-- Content (src/content/): areas.ts (4 区域), events.ts (16 事件 4 类), text.ts (轮次过渡+结局文本)
-- UI (src/ui/index.html): 可玩 HTML，按钮交互，完整 phase pipeline
-- Tests (src/test.ts): 45 tests passing，覆盖全部核心路径和 4 种结局
-- Workers completed: foundation, state, content, ui, integration, qa
